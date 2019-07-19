@@ -52,7 +52,7 @@ function setup_operator_env() {
     local image_env_key="$1"
     local plugin_image="$2"
 
-    sed -i -e "s/^RELEASE_VERSION=.*/RELEASE_VERSION=${RELEASE_VERSION}/" "${CLUSTER_DIR}/env.sh"
+    #sed -i -e "s/^RELEASE_VERSION=.*/RELEASE_VERSION=${RELEASE_VERSION}/" "${CLUSTER_DIR}/env.sh"
 
     if [[ -n "${plugin_image}" ]]; then
         sed -i -e "s#^${image_env_key}=.*#${image_env_key}=${plugin_image}#" "${CLUSTER_DIR}/env.sh"
@@ -62,7 +62,7 @@ function setup_operator_env() {
 # Patch the CNO out of the cluster-version-operator and scale it down to zero so
 # we can run our local CNO instead
 function stop_deployed_operator() {
-    kubectl patch --type=json -p "$(cat hack/overrides-patch.yaml)" clusterversion version
+    #kubectl patch --type=json -p "$(cat hack/overrides-patch.yaml)" clusterversion version
 
     if [[ -n "$(kubectl get deployments -n openshift-network-operator 2> /dev/null | grep network-operator)" ]]; then
         echo "Scaling the deployed network operator to 0"
@@ -265,7 +265,7 @@ if [[ -z "$(ls -A ${CLUSTER_DIR} 2> /dev/null | grep -v install-config.yaml | gr
 elif [[ -n "$(ls -A ${CLUSTER_DIR}/terraform.* 2> /dev/null)" ]]; then
     echo "Attaching to already running cluster..."
 
-    wait_for_cluster
+    #wait_for_cluster
     stop_deployed_operator
     extract_environment_from_running_cluster
 else
@@ -275,4 +275,4 @@ fi
 
 setup_operator_env "${IMAGE_ENV_KEY}" "${PLUGIN_IMAGE}"
 
-env $(cat "${CLUSTER_DIR}/env.sh") _output/linux/amd64/cluster-network-operator
+env $(cat "${CLUSTER_DIR}/env.sh") _output/darwin/amd64/cluster-network-operator

@@ -1,4 +1,4 @@
-package proxy
+package proxyconfig
 
 import (
 	"context"
@@ -12,42 +12,29 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/openshift/cluster-network-operator/pkg/names"
+
 	configv1 "github.com/openshift/api/config/v1"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	k8serrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
 	// The number of times the controller will attempt to issue an http GET
 	// to the endpoint specified in readinessEndpoints.
 	proxyProbeMaxRetries = 3
-	// clusterConfigMapName is the name of the proxy.spec.trustedCA
-	// ConfigMap that contains the CA bundle certificate.
-	clusterConfigMapName = "proxy-ca"
-	// clusterConfigMapNamespace is the name of the namespace that hosts
-	// the proxy.spec.trustedCA ConfigMap.
-	clusterConfigMapNamespace = "openshift-config-managed"
 	// clusterConfigMapKey is the name of the data key containing the PEM encoded
 	// CA certificate trust bundle in clusterConfigMapName.
-	clusterConfigMapKey = "ca-bundle.crt"
-	// installerConfigMapName is the name of the ConfigMap generated
-	// by the installer containing the user-provided CA certificate bundle.
-	installerConfigMapName = "proxy-ca-bundle"
-	// installerConfigMapNamespace is the name of the namespace that hosts the
-	// ConfigMap containing the user-provided CA certificate bundle.
-	installerConfigMapNamespace = "openshift-config"
-
-	proxyHTTPScheme   = "http"
-	proxyHTTPSScheme  = "https"
+	clusterConfigMapKey  = "ca-bundle.crt"
+	proxyHTTPScheme      = "http"
+	proxyHTTPSScheme     = "https"
 )
 
 // ValidateProxyConfig ensures the proxy config is valid.
-func ValidateProxyConfig(cli client.Client, proxyConfig configv1.ProxySpec) error {
-	if len(proxyConfig.HTTPProxy) != 0 {
+func (r *ReconcileProxyConfig) ValidateProxyConfig(proxyConfig *configv1.ProxySpec) error {
+	if isSpecHTTPProxySet(proxyConfig) {
 		scheme, err := validateURI(proxyConfig.HTTPProxy)
 		if err != nil {
 			return fmt.Errorf("invalid httpProxy URI: %v", err)
@@ -56,8 +43,8 @@ func ValidateProxyConfig(cli client.Client, proxyConfig configv1.ProxySpec) erro
 			return fmt.Errorf("httpProxy requires a %q URI scheme", proxyHTTPScheme)
 		}
 	}
-	if len(proxyConfig.HTTPSProxy) != 0 {
-		if len(proxyConfig.TrustedCA.Name) != 0 {
+	if isSpecHTTPSProxySet(proxyConfig) {
+		if isSpecTrustedCASet(proxyConfig) {
 			return errors.New("trustedCA is required when using httpsProxy")
 		}
 		scheme, err := validateURI(proxyConfig.HTTPSProxy)
@@ -68,7 +55,7 @@ func ValidateProxyConfig(cli client.Client, proxyConfig configv1.ProxySpec) erro
 			return fmt.Errorf("httpsProxy requires a %q URI scheme", proxyHTTPSScheme)
 		}
 	}
-	if len(proxyConfig.NoProxy) != 0 {
+	if isSpecNoProxySet(proxyConfig) {
 		for _, v := range strings.Split(proxyConfig.NoProxy, ",") {
 			v = strings.TrimSpace(v)
 			errDomain := validateDomainName(v, false)
@@ -78,20 +65,15 @@ func ValidateProxyConfig(cli client.Client, proxyConfig configv1.ProxySpec) erro
 			}
 		}
 	}
-	if len(proxyConfig.TrustedCA.Name) != 0 {
-		if proxyConfig.TrustedCA.Name != clusterConfigMapName {
-			return fmt.Errorf("invalid ConfigMap reference for TrustedCA: %s", proxyConfig.TrustedCA.Name)
+	var readinessCerts []*x509.Certificate
+	if isSpecTrustedCASet(proxyConfig) {
+		certBundle, err := r.validateTrustedCA(proxyConfig)
+		if err != nil {
+			return fmt.Errorf("failed validating TrustedCA %q: %v", proxyConfig.TrustedCA.Name, err)
 		}
-		cfgMap := &corev1.ConfigMap{}
-		if err := cli.Get(context.TODO(), clusterCAConfigMapName(), cfgMap); err != nil {
-			return err
-		}
-		// TODO: Have validateClusterCABundle return certBundle []byte containing the validated ca bundle.
-		if err := validateClusterCABundle(cfgMap); err != nil {
-			return fmt.Errorf("validation failed for trustedCA %s: %v", proxyConfig.TrustedCA.Name, err)
-		}
+		copy(certBundle, readinessCerts[0:])
 	}
-	if proxyConfig.ReadinessEndpoints != nil {
+	if isSpecReadinessEndpoints(proxyConfig) {
 		for _, endpoint := range proxyConfig.ReadinessEndpoints {
 			scheme, err := validateURI(endpoint)
 			if err != nil {
@@ -102,11 +84,13 @@ func ValidateProxyConfig(cli client.Client, proxyConfig configv1.ProxySpec) erro
 				if err := validateHTTPReadinessEndpoint(endpoint); err != nil {
 					return fmt.Errorf("readinessEndpoint probe failed for endpoint %s", endpoint)
 				}
-			// TODO: Uncomment after validateClusterCABundle() returns a validated ca bundle.
-			/*case scheme == proxyHTTPSScheme:
-				if err := validateHTTPSReadinessEndpoint(caBundle, endpoint); err != nil {
+			case scheme == proxyHTTPSScheme:
+				if !isSpecTrustedCASet(proxyConfig) {
+					return fmt.Errorf("readinessEndpoint with an %q scheme requires trustedCA to be set", proxyHTTPSScheme)
+				}
+				if err := validateHTTPSReadinessEndpoint(readinessCerts, endpoint); err != nil {
 					return fmt.Errorf("readinessEndpoint probe failed for endpoint %s", endpoint)
-				}*/
+				}
 			default:
 				return fmt.Errorf("readiness endpoints requires a %q or %q URI sheme", proxyHTTPScheme, proxyHTTPSScheme)
 			}
@@ -193,11 +177,7 @@ func runHTTPReadinessProbe(endpoint string) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			fmt.Errorf("failed to close connection: %v", err)
-		}
-	}()
+	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest {
 		return nil
@@ -207,7 +187,7 @@ func runHTTPReadinessProbe(endpoint string) error {
 }
 
 // validateHTTPSReadinessEndpoint validates an https readinessEndpoint endpoint.
-func validateHTTPSReadinessEndpoint(certBundle []byte, endpoint string) error {
+func validateHTTPSReadinessEndpoint(certBundle []*x509.Certificate, endpoint string) error {
 	if err := validateHTTPSReadinessEndpointWithRetries(certBundle, endpoint, proxyProbeMaxRetries); err != nil {
 		return err
 	}
@@ -218,7 +198,7 @@ func validateHTTPSReadinessEndpoint(certBundle []byte, endpoint string) error {
 // validateHTTPSReadinessEndpointWithRetries tries to validate an endpoint
 // by using certBundle to attempt a TLS handshake in a finite loop returning
 // the last result if it never succeeds.
-func validateHTTPSReadinessEndpointWithRetries(certBundle []byte, endpoint string, retries int) error {
+func validateHTTPSReadinessEndpointWithRetries(certBundle []*x509.Certificate, endpoint string, retries int) error {
 	for i := 0; i < retries; i++ {
 		if err := runHTTPSReadinessProbe(certBundle, endpoint); err != nil {
 			return err
@@ -230,14 +210,14 @@ func validateHTTPSReadinessEndpointWithRetries(certBundle []byte, endpoint strin
 
 // runHTTPSReadinessProbe tries connecting to endpoint by using certBundle
 // to attempt a TLS handshake.
-func runHTTPSReadinessProbe(certBundle []byte, endpoint string) error {
+func runHTTPSReadinessProbe(certBundle []*x509.Certificate, endpoint string) error {
 	parsedURL, err := url.Parse(endpoint)
 	if err != nil {
 		return fmt.Errorf("failed parsing URL for endpoint: %s", endpoint)
 	}
 	certPool := x509.NewCertPool()
-	if !certPool.AppendCertsFromPEM(certBundle) {
-		return fmt.Errorf("failed to parse CA certificate bundle")
+	for _, cert := range certBundle {
+		certPool.AddCert(cert)
 	}
 	port := parsedURL.Port()
 	if len(port) == 0 {
@@ -250,13 +230,8 @@ func runHTTPSReadinessProbe(certBundle []byte, endpoint string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to endpoint %q: %v", endpoint, err)
 	}
-	defer func() {
-		if err := conn.Close(); err != nil {
-			fmt.Errorf("failed to close connection: %v", err)
-		}
-	}()
 
-	return nil
+	return conn.Close()
 }
 
 // validateDomainName checks if the given string is a valid domain name and returns an error if not.
@@ -281,35 +256,50 @@ func validateSubdomain(v string) error {
 	return k8serrors.NewAggregate(errs)
 }
 
-// validateClusterCABundle validates that configMap contains a
+// validateTrustedCA validates that spec.TrustedCA...
+func (r *ReconcileProxyConfig) validateTrustedCA(proxyConfig *configv1.ProxySpec) ([]*x509.Certificate, error) {
+	cfgMap, err := r.validateTrustedCAConfigMap(proxyConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	caBundle, err := validateTrustedCABundle(cfgMap)
+	if err != nil {
+		return nil, err
+	}
+
+	return caBundle, nil
+}
+
+// validateTrustedCAConfigMap validates that configMap...
+func (r *ReconcileProxyConfig) validateTrustedCAConfigMap(proxyConfig *configv1.ProxySpec) (*corev1.ConfigMap, error) {
+	if isExpectedProxyConfigMap(proxyConfig) {
+		return nil, fmt.Errorf("invalid ConfigMap reference for TrustedCA: %s", proxyConfig.TrustedCA.Name)
+	}
+	cfgMap := &corev1.ConfigMap{}
+	if err := r.client.Get(context.TODO(), names.ProxyTrustedCAConfigMap(), cfgMap); err != nil {
+		return nil, err
+	}
+
+	return cfgMap, nil
+}
+
+// TODO: Have validateTrustedCABundle return certBundle []byte containing the validated ca bundle.
+// validateTrustedCABundle validates that configMap contains a
 // CA certificate bundle named clusterConfigMapKey and that
 // clusterConfigMapKey contains a valid x.509 certificate.
-func validateClusterCABundle(configMap *corev1.ConfigMap) error {
+func validateTrustedCABundle(configMap *corev1.ConfigMap) ([]*x509.Certificate, error) {
 	if _, ok := configMap.Data[clusterConfigMapKey]; !ok {
-		return fmt.Errorf("ConfigMap %q is missing %q", clusterConfigMapName, clusterConfigMapKey)
+		return nil, fmt.Errorf("ConfigMap %q is missing %q", names.PROXY_TRUSTED_CA_CONFIGMAP, clusterConfigMapKey)
 	}
-	_, err := x509.ParseCertificates([]byte(configMap.Data[clusterConfigMapKey]))
+	certData := []byte(configMap.Data[clusterConfigMapKey])
+	if len(certData) == 0 {
+		return nil, fmt.Errorf("data key %q is empty from ConfigMap %q", clusterConfigMapKey, names.PROXY_TRUSTED_CA_CONFIGMAP)
+	}
+	certBundle, err := x509.ParseCertificates(certData)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed parsing certificate data from ConfigMap %q: %v",configMap.Name, err)
 	}
 
-	return nil
-}
-
-// installerCAConfigMapName returns the namespaced name of the ConfigMap
-// containing the installer-generated CA certificate bundle.
-func installerCAConfigMapName() types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: installerConfigMapNamespace,
-		Name:      installerConfigMapName,
-	}
-}
-
-// clusterCAConfigMapName returns the namespaced name of the ConfigMap
-// containing the cluster CA certificate bundle.
-func clusterCAConfigMapName() types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: clusterConfigMapNamespace,
-		Name:      clusterConfigMapName,
-	}
+	return certBundle, nil
 }

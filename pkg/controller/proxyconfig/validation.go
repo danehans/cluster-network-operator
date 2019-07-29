@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -34,7 +33,7 @@ const (
 
 // ValidateProxyConfig ensures the proxy config is valid.
 func (r *ReconcileProxyConfig) ValidateProxyConfig(proxyConfig *configv1.ProxySpec) error {
-	if isSpecHTTPProxySet(proxyConfig) {
+	/*if isSpecHTTPProxySet(proxyConfig) {
 		scheme, err := validateURI(proxyConfig.HTTPProxy)
 		if err != nil {
 			return fmt.Errorf("invalid httpProxy URI: %v", err)
@@ -95,7 +94,7 @@ func (r *ReconcileProxyConfig) ValidateProxyConfig(proxyConfig *configv1.ProxySp
 				return fmt.Errorf("readiness endpoints requires a %q or %q URI sheme", proxyHTTPScheme, proxyHTTPSScheme)
 			}
 		}
-	}
+	}*/
 
 	return nil
 }

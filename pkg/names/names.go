@@ -31,3 +31,7 @@ const SERVICE_CA_CONFIGMAP = "openshift-service-ca"
 // MULTUS_VALIDATING_WEBHOOK is the name of the ValidatingWebhookConfiguration for multus-admission-controller
 // that is used in multus admission controller deployment
 const MULTUS_VALIDATING_WEBHOOK = "multus.openshift.io"
+
+// TRUST_BUNDLE_CONFIGMAP_KEY is the name of the data key containing
+// the PEM encoded trust bundle.
+const TRUST_BUNDLE_CONFIGMAP_KEY = "ca-bundle.crt"

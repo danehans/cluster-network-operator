@@ -24,7 +24,8 @@ const (
 	noProxyWildcard = "*"
 )
 
-// ValidateProxyConfig ensures that proxyConfig is valid.
+// ValidateProxyConfig ensures that proxyConfig is valid,
+// returning byte slices of the data from the
 func (r *ReconcileProxyConfig) ValidateProxyConfig(proxyConfig *configv1.ProxySpec) error {
 	if isSpecHTTPProxySet(proxyConfig) {
 		scheme, err := validation.URI(proxyConfig.HTTPProxy)
@@ -60,13 +61,8 @@ func (r *ReconcileProxyConfig) ValidateProxyConfig(proxyConfig *configv1.ProxySp
 	}
 
 	if isSpecTrustedCASet(proxyConfig) {
-		_, err := r.validateTrustedCA(proxyConfig.TrustedCA.Name)
-		if err != nil {
-			return fmt.Errorf("failed to validate TrustedCA '%s': %v", proxyConfig.TrustedCA.Name, err)
-		}
-	} else {
-		if err := r.generateSystemTrustBundleConfigMap(); err != nil {
-			return fmt.Errorf("failed to generate system trust bundle configmap: %v", err)
+		if err := r.validateTrustedCA(proxyConfig); err != nil {
+			return fmt.Errorf("failed to validate trustedCA '%s': %v", proxyConfig.TrustedCA.Name, err)
 		}
 	}
 
@@ -74,57 +70,30 @@ func (r *ReconcileProxyConfig) ValidateProxyConfig(proxyConfig *configv1.ProxySp
 }
 
 // validateTrustedCA validates that trustedCA is a valid ConfigMap
-// reference and that the configmap contains a valid trust bundle,
-// returning a byte[] of the trust bundle data upon success.
-func (r *ReconcileProxyConfig) validateTrustedCA(trustedCA string) ([]byte, error) {
-	cfgMap, err := r.validateConfigMapRef(trustedCA)
+// reference and that the configmap contains a valid trust bundle.
+func (r *ReconcileProxyConfig) validateTrustedCA(proxyConfig *configv1.ProxySpec) error {
+	cfgMap, err := r.validateConfigMapRef(proxyConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate configmap reference for proxy trustedCA '%s': %v",
-			trustedCA, err)
+		return fmt.Errorf("failed to validate configmap reference for proxy trustedCA '%s': %v",
+			proxyConfig.TrustedCA.Name, err)
 	}
 
 	// Update return values to include []*x509.Certificates for https readinessEndpoint support.
-	_, bundleData, err := r.validateTrustBundle(cfgMap)
-	if err != nil {
-		return nil, fmt.Errorf("failed to validate trust bundle for proxy trustedCA '%s': %v",
-			trustedCA, err)
+	if _, _, err := validation.TrustBundle(cfgMap); err != nil {
+		return fmt.Errorf("failed to validate trust bundle for proxy trustedCA '%s': %v",
+			proxyConfig.TrustedCA.Name, err)
 	}
 
-	systemData, err := r.validateSystemTrustBundle(names.SYSTEM_TRUST_BUNDLE)
-	if err != nil {
-		return nil, fmt.Errorf("failed to validate system trust bundle '%s': %v", names.SYSTEM_TRUST_BUNDLE, err)
-	}
-
-	trustedCACfgMap, err := r.ensureTrustedCABundleConfigMap(bundleData, systemData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to ensure trusted ca bundle configmap '%s/%s': %v",
-			trustedCACfgMap.Namespace, trustedCACfgMap.Name, err)
-	}
-
-	if err := r.syncTrustedCABundleConfigMap(trustedCACfgMap); err != nil {
-		return nil, fmt.Errorf("failed to sync trusted ca bundle configmap %s/%s: %v", trustedCACfgMap.Namespace,
-			trustedCACfgMap.Name, err)
-	}
-
-	return bundleData, nil
+	return nil
 }
 
 // validateConfigMapRef validates that trustedCA is a valid ConfigMap reference.
-// If the ConfigMap does not exist, it will create a ConfigMap named "trusted-ca-bundle"
-// in namespace "openshift-config-managed" containing a system trust bundle.
-// Otherwise it will return the ConfigMap referenced by proxy trustedCA.
-func (r *ReconcileProxyConfig) validateConfigMapRef(trustedCA string) (*corev1.ConfigMap, error) {
+// If the ConfigMap exists, it will return the ConfigMap referenced by trustedCA.
+func (r *ReconcileProxyConfig) validateConfigMapRef(proxyConfig *configv1.ProxySpec) (*corev1.ConfigMap, error) {
 	cfgMap := &corev1.ConfigMap{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: names.ADDL_TRUST_BUNDLE_CONFIGMAP_NS,
-		Name: trustedCA}, cfgMap); err != nil {
-		//if apierrors.IsNotFound(err) {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: names.ADDL_TRUST_BUNDLE_CONFIGMAP_NS, Name: proxyConfig.TrustedCA.Name}, cfgMap); err != nil {
 		return nil, fmt.Errorf("failed to get trustedCA configmap for proxy %s: %v", names.PROXY_CONFIG, err)
 	}
-	/*if err := r.generateSystemTrustBundleConfigMap(); err != nil {
-		return nil, fmt.Errorf("failed to generate system trust bundle configmap for proxy '%s': %v",
-			names.PROXY_CONFIG, err)
-	}*/
-	//}
 
 	return cfgMap, nil
 }

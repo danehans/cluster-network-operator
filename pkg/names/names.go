@@ -57,6 +57,8 @@ const TRUST_BUNDLE_CONFIGMAP_KEY = "ca-bundle.crt"
 // SYSTEM_TRUST_BUNDLE is the full path to the file containing
 // the system trust bundle.
 const SYSTEM_TRUST_BUNDLE = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+// TODO: remove following line used for testing.
+//const SYSTEM_TRUST_BUNDLE = "/usr/local/etc/openssl/cert.pem"
 
 // Proxy returns the namespaced name "cluster" in the
 // default namespace.

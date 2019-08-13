@@ -119,8 +119,10 @@ func (r *ReconcileProxyConfig) validateSystemTrustBundle(trustBundle string) ([]
 	if err != nil {
 		return nil, err
 	}
-	if _, _, err := validation.CertificateData(bundleData); err != nil {
-		return nil, err
+	if len(bundleData) > 0 {
+		if _, _, err := validation.CertificateData(bundleData); err != nil {
+			return nil, err
+		}
 	}
 
 	return bundleData, nil

@@ -81,6 +81,7 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 func handleConfigMap(meta metav1.Object) bool {
 	return meta.GetNamespace() == names.ADDL_TRUST_BUNDLE_CONFIGMAP_NS
 }
+
 /*func handleConfigMap(meta metav1.Object) bool {
 	return meta.GetNamespace() == names.ADDL_TRUST_BUNDLE_CONFIGMAP_NS ||
 		(meta.GetNamespace() == names.TRUSTED_CA_BUNDLE_CONFIGMAP_NS &&
@@ -202,29 +203,29 @@ func (r *ReconcileProxyConfig) Reconcile(request reconcile.Request) (reconcile.R
 
 		log.Printf("Reconciling configmap '%s/%s' complete", request.Namespace, request.Name)
 	/*case request.Namespace == names.TRUSTED_CA_BUNDLE_CONFIGMAP_NS:
-		log.Printf("Reconciling configmap '%s/%s'", request.Namespace, request.Name)
+	log.Printf("Reconciling configmap '%s/%s'", request.Namespace, request.Name)
 
-		if err := r.client.Get(context.TODO(), request.NamespacedName, trustBundle); err != nil {
-			if apierrors.IsNotFound(err) {
-				// Request object not found, could have been deleted after reconcile request.
-				// Return and don't requeue
-				log.Println("configmap not found; reconciliation will be skipped", "request", request)
-				return reconcile.Result{}, nil
-			}
-			// Error reading the object - requeue the request.
-			return reconcile.Result{}, fmt.Errorf("failed to get configmap '%s': %v", request, err)
+	if err := r.client.Get(context.TODO(), request.NamespacedName, trustBundle); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Request object not found, could have been deleted after reconcile request.
+			// Return and don't requeue
+			log.Println("configmap not found; reconciliation will be skipped", "request", request)
+			return reconcile.Result{}, nil
 		}
+		// Error reading the object - requeue the request.
+		return reconcile.Result{}, fmt.Errorf("failed to get configmap '%s': %v", request, err)
+	}
 
-		if _, _, err := r.validateTrustBundle(trustBundle); err != nil {
-			log.Printf("Failed to validate trust bundle for configmap '%s/%s': %v", trustBundle.Namespace,
-				trustBundle.Name, err)
-			r.status.SetDegraded(statusmanager.ProxyConfig, "TrustedCAConfigMapFailure",
-				fmt.Sprintf("Failed to validate trust bundle configmap '%s/%s' (%v)", trustBundle.Namespace,
-					trustBundle.Name, err))
-			return reconcile.Result{}, err
-		}
+	if _, _, err := r.validateTrustBundle(trustBundle); err != nil {
+		log.Printf("Failed to validate trust bundle for configmap '%s/%s': %v", trustBundle.Namespace,
+			trustBundle.Name, err)
+		r.status.SetDegraded(statusmanager.ProxyConfig, "TrustedCAConfigMapFailure",
+			fmt.Sprintf("Failed to validate trust bundle configmap '%s/%s' (%v)", trustBundle.Namespace,
+				trustBundle.Name, err))
+		return reconcile.Result{}, err
+	}
 
-		log.Printf("Reconciling configmap '%s/%s' complete", request.Namespace, request.Name)*/
+	log.Printf("Reconciling configmap '%s/%s' complete", request.Namespace, request.Name)*/
 	default:
 		// unknown object
 		log.Println("Ignoring unknown object, reconciliation will be skipped", "request", request)
@@ -324,16 +325,67 @@ func (r *ReconcileProxyConfig) configMapIsProxyTrustedCA(cfgMapName string) erro
 // ensureTrustedCABundleConfigMap merges the system trust bundle with the
 // proxyConfig trustedCA trust bundle (if specified), returning the configmap.
 func (r *ReconcileProxyConfig) ensureTrustedCABundleConfigMap() (*corev1.ConfigMap, error) {
-	systemData, err := r.validateSystemTrustBundle(names.SYSTEM_TRUST_BUNDLE)
+	/*systemData, err := r.validateSystemTrustBundle(names.SYSTEM_TRUST_BUNDLE)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate system trust bundle %s: %v", names.SYSTEM_TRUST_BUNDLE, err)
+	}*/
+
+	proxyConfig := &configv1.Proxy{}
+	if err := r.client.Get(context.TODO(), names.Proxy(), proxyConfig); err != nil {
+		return nil, fmt.Errorf("failed to get proxy '%s': %v", names.PROXY_CONFIG, err)
 	}
+
+	combinedTrustData := []byte{}
+	if len(proxyConfig.Spec.TrustedCA.Name) > 0 {
+		addlCfgMap := &corev1.ConfigMap{}
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: names.ADDL_TRUST_BUNDLE_CONFIGMAP_NS, Name: proxyConfig.Spec.TrustedCA.Name}, addlCfgMap); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return nil, fmt.Errorf("failed to get additional trust bundle configmap '%s/%s': %v", addlCfgMap.Namespace, addlCfgMap.Name, err)
+			}
+			certString, ok := addlCfgMap.Data[names.TRUST_BUNDLE_CONFIGMAP_KEY]
+			if !ok {
+				return nil, fmt.Errorf("trust bundle configmap '%s/%s' missing data key '%s'", names.TRUST_BUNDLE_CONFIGMAP_KEY)
+			}
+			if len(certString) == 0 {
+				return nil, fmt.Errorf("trust bundle configmap '%s/%s' key '%s' is empty", names.TRUST_BUNDLE_CONFIGMAP_KEY)
+			}
+			addlTrustData := []byte(certString)
+			for _, d := range addlTrustData {
+				combinedTrustData = append(combinedTrustData, d)
+			}
+		}
+	}
+	/*if len(systemData) > 0 {
+		for _, d := range systemData {
+			combinedTrustData = append(combinedTrustData, d)
+		}
+	}*/
 
 	trustedCACfgMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      names.TRUSTED_CA_BUNDLE_CONFIGMAP_NAME,
 			Namespace: names.TRUSTED_CA_BUNDLE_CONFIGMAP_NS,
 		},
+		Data: map[string]string{names.TRUST_BUNDLE_CONFIGMAP_KEY: string(combinedTrustData)},
+	}
+
+	/*if _, _, err := r.validateTrustBundle(trustedCACfgMap); err != nil {
+		return nil, fmt.Errorf("failed to validate configmap '%s/%s': %v", trustedCACfgMap.Namespace,
+			trustedCACfgMap.Name, err)
+	}*/
+
+	return trustedCACfgMap, nil
+}
+
+// ensureTrustedCABundleConfigMap merges the additionalData with systemData
+// into a single byte slice, ensures the merged byte slice contains valid
+// PEM encoded certificates, embeds the merged byte slice into a ConfigMap
+// named "trusted-ca-bundle" in namespace "openshift-config-managed" and
+// returns the configmap.
+/*func (r *ReconcileProxyConfig) ensureTrustedCABundleConfigMap() (*corev1.ConfigMap, error) {
+	systemData, err := r.validateSystemTrustBundle(names.SYSTEM_TRUST_BUNDLE)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate system trust bundle %s: %v", names.SYSTEM_TRUST_BUNDLE, err)
 	}
 
 	proxyConfig := &configv1.Proxy{}
@@ -341,37 +393,44 @@ func (r *ReconcileProxyConfig) ensureTrustedCABundleConfigMap() (*corev1.ConfigM
 		return nil, fmt.Errorf("failed to get proxy '%s': %v", names.PROXY_CONFIG, err)
 	}
 
-	/*if len(proxyConfig.Spec.TrustedCA.Name) > 0 {
+	combinedTrustData := []byte{}
+	if len(proxyConfig.Spec.TrustedCA.Name) > 0 {
 		addlCfgMap := &corev1.ConfigMap{}
 		if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: names.ADDL_TRUST_BUNDLE_CONFIGMAP_NS, Name: proxyConfig.Spec.TrustedCA.Name}, addlCfgMap); err != nil {
 			if !apierrors.IsNotFound(err) {
 				return nil, fmt.Errorf("failed to get additional trust bundle configmap '%s/%s': %v", addlCfgMap.Namespace, addlCfgMap.Name, err)
 			}
-			combinedTrustData := []byte{}
-			if len(addlCfgMap.Data) > 0 {
-				certString, ok := addlCfgMap.Data[names.TRUST_BUNDLE_CONFIGMAP_KEY]
-				if ok {
+			if certString, ok := addlCfgMap.Data[names.TRUST_BUNDLE_CONFIGMAP_KEY]; ok {
+				if len(certString) > 0 {
 					addlTrustData := []byte(certString)
 					for _, d := range addlTrustData {
 						combinedTrustData = append(combinedTrustData, d)
-					}
+						}
 				}
-				for _, d := range systemData {
-					combinedTrustData = append(combinedTrustData, d)
-				}
-				trustedCACfgMap.Data = map[string]string{names.TRUST_BUNDLE_CONFIGMAP_KEY: string(combinedTrustData)}
 			}
 		}
-	} else {*/
-		trustedCACfgMap.Data = map[string]string{names.TRUST_BUNDLE_CONFIGMAP_KEY: string(systemData)}
-	//}
-	if _, _, err := r.validateTrustBundle(trustedCACfgMap); err != nil {
-		return nil, fmt.Errorf("failed to validate configmap '%s/%s': %v", trustedCACfgMap.Namespace,
-			trustedCACfgMap.Name, err)
 	}
 
-	return trustedCACfgMap, nil
-}
+	if len(systemData) > 0 {
+		for _, d := range systemData {
+			combinedTrustData = append(combinedTrustData, d)
+		}
+	}
+
+	trustBundleCfgMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      names.TRUSTED_CA_BUNDLE_CONFIGMAP_NAME,
+			Namespace: names.TRUSTED_CA_BUNDLE_CONFIGMAP_NS,
+		},
+		Data: map[string]string{names.TRUST_BUNDLE_CONFIGMAP_KEY: string(combinedTrustData)},
+	}
+	if _, _, err := r.validateTrustBundle(trustBundleCfgMap); err != nil {
+		return nil, fmt.Errorf("failed to validate merged configmap '%s/%s': %v", trustBundleCfgMap.Namespace,
+			trustBundleCfgMap.Name, err)
+	}
+
+	return trustBundleCfgMap, nil
+}*/
 
 // configMapsEqual compares the values of data key "ca-bundle.crt"
 // between a and b, returning true if they are equal.

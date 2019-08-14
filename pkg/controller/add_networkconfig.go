@@ -4,6 +4,7 @@ import (
 	"github.com/openshift/cluster-network-operator/pkg/controller/clusterconfig"
 	"github.com/openshift/cluster-network-operator/pkg/controller/operconfig"
 	"github.com/openshift/cluster-network-operator/pkg/controller/proxyconfig"
+	trustpub "github.com/openshift/cluster-network-operator/pkg/controller/trust_bundle_publisher"
 )
 
 func init() {
@@ -13,5 +14,6 @@ func init() {
 		operconfig.Add,
 		clusterconfig.Add,
 		operconfig.AddConfigMapReconciler,
+		trustpub.Add,
 	)
 }

@@ -2,7 +2,6 @@ package proxyconfig
 
 import (
 	"context"
-	"crypto/x509"
 	"fmt"
 	"io/ioutil"
 	"k8s.io/apimachinery/pkg/types"
@@ -63,30 +62,25 @@ func (r *ReconcileProxyConfig) ValidateProxyConfig(proxyConfig *configv1.ProxySp
 	return nil
 }
 
-// validateTrustedCA validates that trustedCA is a valid ConfigMap
-// reference and that the ConfigMap contains a valid trust bundle,
-// returning the byte slices of the certificate data from the
-// validated trustedCA and system trust bundles.
-func (r *ReconcileProxyConfig) validateTrustedCA(trustedCA string) ([]byte, []byte, error) {
+// validateTrustedCA validates that trustedCA is a valid ConfigMap reference
+// containing a valid trust bundle.
+func (r *ReconcileProxyConfig) validateTrustedCA(trustedCA string) error {
 	cfgMap, err := r.validateConfigMapRef(trustedCA)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to validate configmap reference for proxy trustedCA '%s': %v",
+		return fmt.Errorf("failed to validate configmap reference for proxy trustedCA '%s': %v",
 			trustedCA, err)
 	}
 
-	// TODO: Update return values to include []*x509.Certificates for https readinessEndpoint support.
-	_, bundleData, err := r.validateTrustBundle(cfgMap)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to validate trust bundle for proxy trustedCA '%s': %v",
+	if err := r.validateTrustBundle(cfgMap); err != nil {
+		return fmt.Errorf("failed to validate trust bundle for proxy trustedCA '%s': %v",
 			trustedCA, err)
 	}
 
-	systemData, err := r.validateSystemTrustBundle(names.SYSTEM_TRUST_BUNDLE)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to validate system trust bundle '%s': %v", names.SYSTEM_TRUST_BUNDLE, err)
+	if err := r.validateSystemTrustBundle(names.SYSTEM_TRUST_BUNDLE); err != nil {
+		return fmt.Errorf("failed to validate system trust bundle '%s': %v", names.SYSTEM_TRUST_BUNDLE, err)
 	}
 
-	return bundleData, systemData, nil
+	return nil
 }
 
 // validateConfigMapRef validates that trustedCA is a valid ConfigMap reference,
@@ -106,28 +100,26 @@ func (r *ReconcileProxyConfig) validateConfigMapRef(trustedCA string) (*corev1.C
 
 // validateTrustBundle is a wrapper for validation.TrustBundleConfigMap(), which
 // validates that cfgMap contains a data key named "ca-bundle.crt" and the value
-// of the key is one or more valid PEM encoded certificates, returning slices of
-// the validated certificates and certificate data.
-func (r *ReconcileProxyConfig) validateTrustBundle(cfgMap *corev1.ConfigMap) ([]*x509.Certificate, []byte, error) {
-	certBundle, bundleData, err := validation.TrustBundle(cfgMap)
-	if err != nil {
-		return nil, nil, err
+// of the key is one or more valid PEM encoded certificates.
+func (r *ReconcileProxyConfig) validateTrustBundle(cfgMap *corev1.ConfigMap) error {
+	if _, _, err := validation.TrustBundle(cfgMap); err != nil {
+		return err
 	}
 
-	return certBundle, bundleData, nil
+	return nil
 }
 
 // validateSystemTrustBundle reads the trustBundle file, ensuring each
 // PEM block is type "CERTIFICATE" and the block can be parsed as an
-// x509 CA certificate, returning the parsed certificates as a []byte.
-func (r *ReconcileProxyConfig) validateSystemTrustBundle(trustBundle string) ([]byte, error) {
+// x509 CA certificate.
+func (r *ReconcileProxyConfig) validateSystemTrustBundle(trustBundle string) error {
 	bundleData, err := ioutil.ReadFile(trustBundle)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if _, _, err := validation.CertificateData(bundleData); err != nil {
-		return nil, err
+		return err
 	}
 
-	return bundleData, nil
+	return nil
 }

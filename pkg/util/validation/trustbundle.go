@@ -36,7 +36,7 @@ func TrustBundle(cfgMap *corev1.ConfigMap) ([]*x509.Certificate, []byte, error) 
 }
 
 // CertificateData decodes certData, ensuring each PEM block is type
-// "CERTIFICATE" and the block can be parsed as an x509 certificate,
+// "CERTIFICATE" and the block can be parsed as an x509 CA certificate,
 // returning slices of parsed certificates and parsed certificate data.
 func CertificateData(certData []byte) ([]*x509.Certificate, []byte, error) {
 	var block *pem.Block
@@ -54,6 +54,9 @@ func CertificateData(certData []byte) ([]*x509.Certificate, []byte, error) {
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to parse certificate: %v", err)
+		}
+		if !cert.IsCA {
+			return nil, nil, fmt.Errorf("certificate is not a CA certificate: %v", err)
 		}
 		certBundle = append(certBundle, cert)
 	}

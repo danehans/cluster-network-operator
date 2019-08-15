@@ -159,7 +159,7 @@ func (r *ReconcileProxyConfig) Reconcile(request reconcile.Request) (reconcile.R
 			}
 
 			// Create a configmap containing the merged proxy.trustedCA/system bundles.
-			trustBundle, err = r.mergeTrustBundles(proxyData, systemData)
+			trustBundle, err = r.mergeTrustBundlesToConfigMap(proxyData, systemData)
 			if err != nil {
 				log.Printf("Failed to merge trustedCA and system bundles for proxy '%s': %v", proxyConfig.Name, err)
 				r.status.SetDegraded(statusmanager.ProxyConfig, "ProxyCAMergeFailure",
@@ -232,7 +232,7 @@ func (r *ReconcileProxyConfig) Reconcile(request reconcile.Request) (reconcile.R
 		}
 
 		// Create a configmap containing the merged proxy.trustedCA/system bundles.
-		trustBundle, err = r.mergeTrustBundles(proxyData, systemData)
+		trustBundle, err = r.mergeTrustBundlesToConfigMap(proxyData, systemData)
 		if err != nil {
 			log.Printf("Failed to merge trustedCA and system bundles for proxy '%s': %v", names.PROXY_CONFIG, err)
 			r.status.SetDegraded(statusmanager.ProxyConfig, "EnsureProxyConfigFailure",
@@ -241,6 +241,7 @@ func (r *ReconcileProxyConfig) Reconcile(request reconcile.Request) (reconcile.R
 			return reconcile.Result{}, fmt.Errorf("failed to merge trustedCA and system bundles for proxy '%s': %v",
 				names.PROXY_CONFIG, err)
 		}
+
 		log.Printf("Reconciling additional trust bundle configmap '%s/%s' complete", request.Namespace, request.Name)
 	default:
 		// unknown object
@@ -293,13 +294,13 @@ func isSpecTrustedCASet(proxyConfig *configv1.ProxySpec) bool {
 	return len(proxyConfig.TrustedCA.Name) > 0
 }
 
-// mergeTrustBundles merges the additionalData with systemData
+// mergeTrustBundlesToConfigMap merges the additionalData with systemData
 // into a single byte slice, ensures the merged byte slice contains valid
 // PEM encoded certificates, embeds the merged byte slice into a ConfigMap
 // named "trusted-ca-bundle" in namespace "openshift-config-managed" and
 // returns the ConfigMap. It's the caller's responsibility to create the
 // ConfigMap in the api server.
-func (r *ReconcileProxyConfig) mergeTrustBundles(additionalData, systemData []byte) (*corev1.ConfigMap, error) {
+func (r *ReconcileProxyConfig) mergeTrustBundlesToConfigMap(additionalData, systemData []byte) (*corev1.ConfigMap, error) {
 	if len(additionalData) == 0 {
 		return nil, fmt.Errorf("failed to merge ca bundles, additional trust bundle is empty")
 	}

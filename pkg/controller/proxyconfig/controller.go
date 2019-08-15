@@ -148,7 +148,7 @@ func (r *ReconcileProxyConfig) Reconcile(request reconcile.Request) (reconcile.R
 			}
 		} else {
 			// Validate trustedCA of proxy spec.
-			proxyData, systemData, err := r.validateTrustedCA(proxyConfig.Spec.TrustedCA.Name)
+			_, proxyData, systemData, err := r.validateTrustedCA(proxyConfig.Spec.TrustedCA.Name)
 			if err != nil {
 				log.Printf("Failed to validate trustedCA for proxy '%s': %v", proxyConfig.Name, err)
 				r.status.SetDegraded(statusmanager.ProxyConfig, "InvalidProxyConfig",
@@ -220,7 +220,7 @@ func (r *ReconcileProxyConfig) Reconcile(request reconcile.Request) (reconcile.R
 		}
 
 		// Validate the trust bundle configmap.
-		proxyData, systemData, err := r.validateTrustedCA(trustBundle.Name)
+		_, proxyData, systemData, err := r.validateTrustedCA(trustBundle.Name)
 		if err != nil {
 			log.Printf("Failed to validate additional trust bundle configmap '%s/%s': %v", trustBundle.Namespace,
 				trustBundle.Name, err)

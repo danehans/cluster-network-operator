@@ -406,3 +406,19 @@ func (r *ReconcileProxyConfig) configMapIsProxyTrustedCA(cfgMapName string) erro
 
 	return nil
 }
+
+// configMapIsProxyTrustedCA...
+func (r *ReconcileProxyConfig) proxyReadinessEndpoints() error {
+	proxyConfig := &configv1.Proxy{}
+	err := r.client.Get(context.TODO(), names.Proxy(), proxyConfig)
+	if err != nil {
+		return fmt.Errorf("failed to get proxy '%s': %v", names.PROXY_CONFIG, err)
+	}
+
+	if proxyConfig.Spec.TrustedCA.Name != cfgMapName {
+		return fmt.Errorf("configmap name '%s' does not match proxy trustedCA name '%s'", cfgMapName,
+			proxyConfig.Spec.TrustedCA.Name)
+	}
+
+	return nil
+}

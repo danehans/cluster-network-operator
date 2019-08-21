@@ -70,52 +70,11 @@ func (r *ReconcileProxyConfig) ValidateProxyConfig(proxyConfig *configv1.ProxySp
 	}
 
 	if isSpecReadinessEndpointsSet(proxyConfig) {
-		if !isSpecHTTPProxySet(proxyConfig) && !isSpecHTTPSProxySet(proxyConfig) {
-			return fmt.Errorf("httpProxy or httpsProxy must be set when using proxy readinessEndpoints")
-		}
-		var trustBundle []*x509.Certificate
-		for _, endpoint := range proxyConfig.ReadinessEndpoints {
-			scheme, err := validation.URI(endpoint)
-			if err != nil {
-				return fmt.Errorf("invalid URI for readinessEndpoint '%s': %v", endpoint, err)
-			}
-			switch {
-			case scheme == proxyHTTPScheme:
-				if err := validateReadinessEndpoint(trustBundle, proxyConfig.HTTPProxy, endpoint); err != nil {
-					return fmt.Errorf("http readinessEndpoint probe failed for endpoint '%s': %v", endpoint, err)
-				}
-			case scheme == proxyHTTPSScheme:
-				var systemData []byte
-				var proxyData []byte
-				if isSpecTrustedCASet(proxyConfig) {
-					// TrustedCA is set, so create a combined trustedCA/system trust bundle for readinessEndpoints.
-					proxyData, systemData, err = r.validateTrustedCA(proxyConfig.TrustedCA.Name)
-					if err != nil {
-						return fmt.Errorf("failed to get certificate data for trustedCA '%s': %v",
-							proxyConfig.TrustedCA.Name, err)
-					}
-				} else {
-					// No trustedCA is set, so use the system trust bundle for readinessEndpoints.
-					systemData, err = ioutil.ReadFile(names.SYSTEM_TRUST_BUNDLE)
-					if err != nil {
-						return fmt.Errorf("failed to read system trust bundle '%s': %v",
-							names.SYSTEM_TRUST_BUNDLE, err)
-					}
-				}
-				// Merge the proxy trustedCA (if it exists) and system trust bundle data.
-				trustBundle, err = validation.MergeCertificateData(systemData, proxyData)
-				if err != nil {
-					return fmt.Errorf("failed to merge system and trustedCA trust bundles: %v", err)
-				}
-				if err := validateReadinessEndpoint(trustBundle, proxyConfig.HTTPSProxy, endpoint); err != nil {
-					return fmt.Errorf("readinessEndpoint probe failed for endpoint '%s': %v", endpoint, err)
-				}
-			default:
-				return fmt.Errorf("a proxy readiness endpoint requires a '%s' or '%s' URI sheme",
-					proxyHTTPScheme, proxyHTTPSScheme)
-			}
+		if err := r.validateReadinessEndpoint(proxyConfig); err != nil {
+			return fmt.Errorf("failed to validate readinessEndpoints for proxy '%s': %v", names.PROXY_CONFIG, err)
 		}
 	}
+
 
 	return nil
 }
@@ -188,34 +147,77 @@ func (r *ReconcileProxyConfig) validateSystemTrustBundle(trustBundle string) ([]
 	return bundleData, nil
 }
 
-// validateReadinessEndpoint validates endpoint using proxy. If caBundle
-// is not nil, TLS is used for the probe with caBundle as the cert pool.
-func validateReadinessEndpoint(caBundle []*x509.Certificate, proxy, endpoint string) error {
-	proxyURL, err := url.Parse(proxy)
-	if err != nil {
-		return fmt.Errorf("failed to parse proxy url '%s': %v", proxy, err)
-	}
+// validateReadinessEndpoint validates
+func (r *ReconcileProxyConfig) validateReadinessEndpoint(proxyConfig *configv1.ProxySpec) error {
+		var trustBundle []*x509.Certificate
+		for _, endpoint := range proxyConfig.ReadinessEndpoints {
+			scheme, err := validation.URI(endpoint)
+			if err != nil {
+				return fmt.Errorf("invalid URI for readinessEndpoint '%s': %v", endpoint, err)
+			}
+			switch {
+			case scheme == proxyHTTPScheme:
+				if !isSpecHTTPProxySet(proxyConfig) {
+					return fmt.Errorf("httpProxy must be set when using a http proxy readinessEndpoint")
+				}
+				proxyURL, err := url.Parse(proxyConfig.HTTPProxy)
+				if err != nil {
+					return fmt.Errorf("failed to parse proxy url '%s': %v", proxyConfig.HTTPProxy, err)
+				}
 
-	endpointURL, err := url.Parse(endpoint)
-	if err != nil {
-		return fmt.Errorf("failed to parse endpoint url '%s': %v", endpoint, err)
-	}
+				endpointURL, err := url.Parse(endpoint)
+				if err != nil {
+					return fmt.Errorf("failed to parse endpoint url '%s': %v", endpoint, err)
+				}
+				if err := validateReadinessEndpointWithRetries(trustBundle, proxyURL, endpointURL, proxyProbeMaxRetries); err != nil {
+					return err
+				}
+			case scheme == proxyHTTPSScheme:
+				if !isSpecHTTPSProxySet(proxyConfig) {
+					return fmt.Errorf("httpsProxy must be set when using a https proxy readinessEndpoint")
+				}
+				proxyURL, err := url.Parse(proxyConfig.HTTPProxy)
+				if err != nil {
+					return fmt.Errorf("failed to parse proxy url '%s': %v", proxyConfig.HTTPProxy, err)
+				}
 
-	if endpointURL.Scheme == proxyHTTPScheme && proxyURL.Scheme == proxyHTTPSScheme {
-		return fmt.Errorf("endpoint '%s' requires a `%s` proxy scheme", endpoint, proxyHTTPScheme)
-	}
-
-	if endpointURL.Scheme == proxyHTTPSScheme && proxyURL.Scheme == proxyHTTPScheme {
-		return fmt.Errorf("endpoint '%s' requires a `%s` proxy scheme", endpoint, proxyHTTPSScheme)
-	}
-
-	if proxyURL.Scheme == proxyHTTPSScheme && len(caBundle) == 0 {
-		return fmt.Errorf("https proxy probe requires at least one CA certificate")
-	}
-
-	if err := validateReadinessEndpointWithRetries(caBundle, proxyURL, endpointURL, proxyProbeMaxRetries); err != nil {
-		return err
-	}
+				endpointURL, err := url.Parse(endpoint)
+				if err != nil {
+					return fmt.Errorf("failed to parse endpoint url '%s': %v", endpoint, err)
+				}
+				var systemData []byte
+				var proxyData []byte
+				if isSpecTrustedCASet(proxyConfig) {
+					// TrustedCA is set, so create a combined trustedCA/system trust bundle for readinessEndpoints.
+					proxyData, systemData, err = r.validateTrustedCA(proxyConfig.TrustedCA.Name)
+					if err != nil {
+						return fmt.Errorf("failed to get certificate data for trustedCA '%s': %v",
+							proxyConfig.TrustedCA.Name, err)
+					}
+				} else {
+					// No trustedCA is set, so use the system trust bundle for readinessEndpoints.
+					systemData, err = ioutil.ReadFile(names.SYSTEM_TRUST_BUNDLE)
+					if err != nil {
+						return fmt.Errorf("failed to read system trust bundle '%s': %v",
+							names.SYSTEM_TRUST_BUNDLE, err)
+					}
+				}
+				// Merge the proxy trustedCA (if it exists) and system trust bundle data.
+				trustBundle, err = validation.MergeCertificateData(systemData, proxyData)
+				if err != nil {
+					return fmt.Errorf("failed to merge system and trustedCA trust bundles: %v", err)
+				}
+				if len(trustBundle) == 0 {
+					return fmt.Errorf("https proxy probe requires at least one CA certificate")
+				}
+				if err := validateReadinessEndpointWithRetries(trustBundle, proxyURL, endpointURL, proxyProbeMaxRetries); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("a proxy readiness endpoint requires a '%s' or '%s' URI sheme",
+					proxyHTTPScheme, proxyHTTPSScheme)
+			}
+		}
 
 	return nil
 }

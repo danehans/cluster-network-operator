@@ -8,7 +8,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-network-operator/pkg/controller/statusmanager"
 	"github.com/openshift/cluster-network-operator/pkg/names"
-	"github.com/openshift/cluster-network-operator/pkg/util/validation"
+	certutil "github.com/openshift/cluster-network-operator/pkg/util/certificate"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -107,7 +107,7 @@ func (r *ReconcileConfigMapInjector) Reconcile(request reconcile.Request) (recon
 		log.Println(err)
 		return reconcile.Result{}, err
 	}
-	_, trustedCAbundleData, err := validation.TrustBundleConfigMap(trustedCAbundleConfigMap)
+	trustedCAbundleData, err := certutil.GenerateCertificateDataFromConfigMap(trustedCAbundleConfigMap)
 
 	if err != nil {
 		return reconcile.Result{}, err

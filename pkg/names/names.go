@@ -78,3 +78,12 @@ func TrustedCABundleConfigMap() types.NamespacedName {
 		Name:      TRUSTED_CA_BUNDLE_CONFIGMAP,
 	}
 }
+
+// TrustedCAConfigMapRef returns the namespaced name of
+// openshift-config/name.
+func TrustedCAConfigMapRef(name string) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: ADDL_TRUST_BUNDLE_CONFIGMAP_NS,
+		Name:      name,
+	}
+}

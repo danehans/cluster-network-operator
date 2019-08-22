@@ -17,7 +17,7 @@ func (r *ReconcileProxyConfig) syncProxyStatus(proxy *configv1.Proxy, infra *con
 	var noProxy string
 	updated := proxy.DeepCopy()
 
-	if isSpecNoProxySet(&proxy.Spec) || isSpecHTTPProxySet(&proxy.Spec) || isSpecHTTPSProxySet(&proxy.Spec) {
+	if isSpecNoProxySet(proxy) || isSpecHTTPProxySet(proxy) || isSpecHTTPSProxySet(proxy) {
 		if proxy.Spec.NoProxy == noProxyWildcard {
 			noProxy = proxy.Spec.NoProxy
 		} else {

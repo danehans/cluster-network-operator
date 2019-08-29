@@ -86,6 +86,30 @@ func MergeUserSystemNoProxy(proxy *configv1.Proxy, infra *configv1.Infrastructur
 		} else {
 			set.Insert(fmt.Sprintf(".%s.compute.internal", region))
 		}
+	case configv1.GCPPlatformType:
+		region := infra.Status.PlatformStatus.GCP.Region
+		projectID := infra.Status.PlatformStatus.GCP.ProjectID
+		var zones []string
+		switch {
+		case region == "us-central1":
+			zoneLabels := []string{"a", "b", "c", "f"}
+			for _, label := range zoneLabels {
+				zones = append(zones, fmt.Sprintf("%s-%s", region, label))
+			}
+		case region == "us-east1" || region == "europe-west1":
+			zoneLabels := []string{"b", "c", "d"}
+			for _, label := range zoneLabels {
+				zones = append(zones, fmt.Sprintf("%s-%s", region, label))
+			}
+		default:
+			zoneLabels := []string{"a", "b", "c"}
+			for _, label := range zoneLabels {
+				zones = append(zones, fmt.Sprintf("%s-%s", region, label))
+			}
+		}
+		for _, zone := range zones {
+			set.Insert(fmt.Sprintf(".%s.c.%s.internal", zone, projectID))
+		}
 	}
 
 	if len(ic.ControlPlane.Replicas) > 0 {
